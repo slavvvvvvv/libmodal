@@ -1,0 +1,324 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Base64
+import java.security.MessageDigest
+
+plugins {
+    `java-library`
+    idea
+    `maven-publish`
+    kotlin("jvm") version "2.2.21"
+    id("com.squareup.wire") version "5.4.0"
+    id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
+    id("org.jetbrains.dokka") version "2.1.0"
+    id("org.jetbrains.dokka-javadoc") version "2.1.0"
+    signing
+}
+
+group = "app.alloy"
+description = "Modal Kotlin SDK"
+
+val coroutinesVersion = "1.10.2"
+val grpcVersion = "1.73.0"
+val protobufVersion = "3.25.5"
+val wireVersion = "5.4.0"
+val junitVersion = "5.12.0"
+val checksumAlgorithms = mapOf(
+    "MD5" to "md5",
+    "SHA-1" to "sha1",
+    "SHA-256" to "sha256",
+    "SHA-512" to "sha512",
+)
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    named("main") {
+        kotlin.srcDir(layout.buildDirectory.dir("generated/sources/wire"))
+    }
+
+    create("integrationTest") {
+        kotlin.srcDir("src/integrationTest/kotlin")
+        resources.srcDir("src/integrationTest/resources")
+        compileClasspath += sourceSets["main"].output + configurations["testRuntimeClasspath"]
+        runtimeClasspath += output + compileClasspath
+    }
+
+    create("examples") {
+        kotlin.srcDir("src/examples/kotlin")
+        resources.srcDir("src/examples/resources")
+        compileClasspath += sourceSets["main"].output + configurations["runtimeClasspath"]
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+configurations.named("integrationTestImplementation") {
+    extendsFrom(configurations["testImplementation"])
+}
+configurations.named("integrationTestRuntimeOnly") {
+    extendsFrom(configurations["testRuntimeOnly"])
+}
+configurations.named("examplesImplementation") {
+    extendsFrom(configurations["implementation"])
+}
+configurations.named("examplesRuntimeOnly") {
+    extendsFrom(configurations["runtimeOnly"])
+}
+
+dependencies {
+    api(kotlin("stdlib"))
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:$coroutinesVersion")
+    implementation("io.grpc:grpc-stub:$grpcVersion")
+    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    implementation("com.squareup.wire:wire-runtime:$wireVersion")
+    implementation("com.squareup.wire:wire-grpc-client:$wireVersion")
+    implementation("org.tomlj:tomlj:1.1.1")
+    implementation("com.upokecenter:cbor:4.5.6")
+    implementation("net.razorvine:pickle:1.5")
+    implementation("io.grpc:grpc-netty-shaded:$grpcVersion")
+    compileOnly("org.apache.tomcat:annotations-api:6.0.53")
+
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion")
+    testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
+    testImplementation("com.github.stefanbirkner:system-lambda:1.2.1")
+    testImplementation("io.grpc:grpc-inprocess:$grpcVersion")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+fun publishingValue(name: String, uppercaseName: String): Provider<String> {
+    return providers.gradleProperty(name)
+        .orElse(providers.environmentVariable(name))
+        .orElse(providers.environmentVariable(uppercaseName))
+}
+
+fun checksumHex(file: File, algorithm: String): String {
+    val digest = MessageDigest.getInstance(algorithm)
+    file.inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) {
+                break
+            }
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString(separator = "") { byte ->
+        "%02x".format(byte)
+    }
+}
+
+fun resolveSigningKey(rawValue: String?): String? {
+    if (rawValue.isNullOrBlank()) {
+        return null
+    }
+
+    val trimmed = rawValue.trim()
+    if (trimmed.startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+        return rawValue
+    }
+
+    val file = File(trimmed)
+    if (file.exists()) {
+        return file.readText()
+    }
+
+    return runCatching {
+        String(Base64.getDecoder().decode(trimmed))
+    }.getOrNull()
+}
+
+wire {
+    sourcePath {
+        srcDir("../modal-client")
+    }
+    kotlin {
+        javaInterop = true
+        rpcRole = "client"
+        out = layout.buildDirectory.dir("generated/sources/wire").get().asFile.path
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+        freeCompilerArgs.addAll(
+            "-Xjsr305=strict",
+            "-Xannotation-default-target=param-property",
+        )
+    }
+}
+
+tasks.named<Test>("test") {
+    useJUnitPlatform()
+    jvmArgs(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+    )
+}
+
+val integrationTest = tasks.register<Test>("integrationTest") {
+    description = "Runs cloud-backed integration tests."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    testClassesDirs = sourceSets["integrationTest"].output.classesDirs
+    classpath = sourceSets["integrationTest"].runtimeClasspath
+    useJUnitPlatform()
+    shouldRunAfter(tasks.named("test"))
+    jvmArgs(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+    )
+}
+
+tasks.register("compileExamples") {
+    description = "Compiles Kotlin example programs."
+    group = LifecycleBasePlugin.BUILD_GROUP
+    dependsOn(tasks.named("examplesClasses"))
+}
+
+val dokkaJavadocJar = tasks.register<Jar>("dokkaJavadocJar") {
+    description = "Assembles a Javadoc jar generated by Dokka."
+    group = LifecycleBasePlugin.BUILD_GROUP
+    archiveClassifier.set("javadoc")
+    val dokkaTask = tasks.named("dokkaGeneratePublicationJavadoc")
+    dependsOn(dokkaTask)
+    from(dokkaTask)
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            artifactId = "modal-kt"
+            from(components["java"])
+            artifact(dokkaJavadocJar)
+
+            pom {
+                name.set("modal-kt")
+                description.set(project.description)
+                url.set("https://github.com/slavvvvvvv/libmodal")
+
+                licenses {
+                    license {
+                        name.set("Apache License, Version 2.0")
+                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                        distribution.set("repo")
+                    }
+                }
+
+                developers {
+                    developer {
+                        id.set("slavko")
+                        name.set("Slavko Bojanic")
+                        email.set("slavko@alloy.app")
+                        organization.set("Alloy")
+                        organizationUrl.set("https://alloy.app")
+                    }
+                }
+
+                scm {
+                    url.set("https://github.com/slavvvvvvv/libmodal")
+                    connection.set("scm:git:https://github.com/slavvvvvvv/libmodal.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/slavvvvvvv/libmodal.git")
+                }
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = "centralBundle"
+            url = uri(layout.buildDirectory.dir("central-portal/repository"))
+        }
+    }
+}
+
+val signingKey = publishingValue("signingKey", "SIGNING_KEY")
+val signingPassword = publishingValue("signingPassword", "SIGNING_PASSWORD")
+val publishRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.contains("publish", ignoreCase = true) ||
+        taskName.contains("bundle", ignoreCase = true) ||
+        taskName.contains("sonatype", ignoreCase = true) ||
+        taskName.contains("release", ignoreCase = true)
+}
+
+signing {
+    isRequired = publishRequested
+    useInMemoryPgpKeys(resolveSigningKey(signingKey.orNull), signingPassword.orNull)
+    sign(publishing.publications["mavenJava"])
+}
+
+nexusPublishing {
+    repositories {
+        sonatype {
+            nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
+            snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
+            username.set(publishingValue("sonatypeUsername", "SONATYPE_USERNAME"))
+            password.set(publishingValue("sonatypePassword", "SONATYPE_PASSWORD"))
+        }
+    }
+}
+
+val centralPortalRepositoryDir = layout.buildDirectory.dir("central-portal/repository")
+
+val cleanCentralPortalRepository = tasks.register<Delete>("cleanCentralPortalRepository") {
+    delete(centralPortalRepositoryDir)
+}
+
+tasks.named("publishMavenJavaPublicationToCentralBundleRepository") {
+    dependsOn(cleanCentralPortalRepository)
+}
+
+val generateCentralPortalChecksums = tasks.register("generateCentralPortalChecksums") {
+    description = "Generates checksum files for the Central Portal upload bundle."
+    group = LifecycleBasePlugin.BUILD_GROUP
+    dependsOn(tasks.named("publishMavenJavaPublicationToCentralBundleRepository"))
+
+    doLast {
+        val repositoryDir = centralPortalRepositoryDir.get().asFile
+        repositoryDir.walkTopDown()
+            .filter { it.isFile }
+            .filter { file ->
+                val name = file.name
+                !name.endsWith(".asc") &&
+                    !name.endsWith(".md5") &&
+                    !name.endsWith(".sha1") &&
+                    !name.endsWith(".sha256") &&
+                    !name.endsWith(".sha512")
+            }
+            .forEach { file ->
+                for ((algorithm, extension) in checksumAlgorithms) {
+                    file.resolveSibling("${file.name}.$extension").writeText(checksumHex(file, algorithm))
+                }
+            }
+    }
+}
+
+tasks.register<Zip>("bundleCentralPortalUpload") {
+    description = "Builds a Sonatype Central Portal upload bundle."
+    group = LifecycleBasePlugin.BUILD_GROUP
+    dependsOn(generateCentralPortalChecksums)
+    destinationDirectory.set(layout.buildDirectory.dir("central-portal"))
+    archiveFileName.set("modal-kt-${project.version}-central-bundle.zip")
+    from(centralPortalRepositoryDir)
+}
+
+idea {
+    module {
+        sourceDirs.add(layout.buildDirectory.dir("generated/sources/wire").get().asFile)
+        generatedSourceDirs.add(layout.buildDirectory.dir("generated/sources/wire").get().asFile)
+    }
+}
+
+tasks.named("check") {
+    dependsOn(integrationTest)
+    dependsOn("compileExamples")
+}
