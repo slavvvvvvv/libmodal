@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Base64
 import java.security.MessageDigest
 
 plugins {
@@ -116,6 +117,26 @@ fun checksumHex(file: File, algorithm: String): String {
     }
 }
 
+fun resolveSigningKey(rawValue: String?): String? {
+    if (rawValue.isNullOrBlank()) {
+        return null
+    }
+
+    val trimmed = rawValue.trim()
+    if (trimmed.startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+        return rawValue
+    }
+
+    val file = File(trimmed)
+    if (file.exists()) {
+        return file.readText()
+    }
+
+    return runCatching {
+        String(Base64.getDecoder().decode(trimmed))
+    }.getOrNull()
+}
+
 wire {
     sourcePath {
         srcDir("../modal-client")
@@ -231,7 +252,7 @@ val publishRequested = gradle.startParameter.taskNames.any { taskName ->
 
 signing {
     isRequired = publishRequested
-    useInMemoryPgpKeys(signingKey.orNull, signingPassword.orNull)
+    useInMemoryPgpKeys(resolveSigningKey(signingKey.orNull), signingPassword.orNull)
     sign(publishing.publications["mavenJava"])
 }
 

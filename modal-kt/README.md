@@ -202,11 +202,14 @@ Required local Gradle properties or environment variables:
 ```properties
 sonatypeUsername=...
 sonatypePassword=...
-signingKey=-----BEGIN PGP PRIVATE KEY BLOCK-----
-...
------END PGP PRIVATE KEY BLOCK-----
+signingKey=/absolute/path/to/signing-key.asc
 signingPassword=...
 ```
+
+`signingKey` supports any of:
+- the raw ASCII-armored private key block
+- an absolute path to a file containing the armored private key
+- a base64-encoded armored private key
 
 You can put these in `~/.gradle/gradle.properties`, export them directly in your shell, or use Gradle-style environment variables such as `ORG_GRADLE_PROJECT_sonatypeUsername`.
 
