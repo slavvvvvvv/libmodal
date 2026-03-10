@@ -224,6 +224,7 @@ val signingKey = publishingValue("signingKey", "SIGNING_KEY")
 val signingPassword = publishingValue("signingPassword", "SIGNING_PASSWORD")
 val publishRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName.contains("publish", ignoreCase = true) ||
+        taskName.contains("bundle", ignoreCase = true) ||
         taskName.contains("sonatype", ignoreCase = true) ||
         taskName.contains("release", ignoreCase = true)
 }
