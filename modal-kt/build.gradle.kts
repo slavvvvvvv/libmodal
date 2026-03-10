@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
 
 plugins {
     `java-library`
@@ -20,6 +21,12 @@ val grpcVersion = "1.73.0"
 val protobufVersion = "3.25.5"
 val wireVersion = "5.4.0"
 val junitVersion = "5.12.0"
+val checksumAlgorithms = mapOf(
+    "MD5" to "md5",
+    "SHA-1" to "sha1",
+    "SHA-256" to "sha256",
+    "SHA-512" to "sha512",
+)
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
@@ -90,6 +97,23 @@ fun publishingValue(name: String, uppercaseName: String): Provider<String> {
     return providers.gradleProperty(name)
         .orElse(providers.environmentVariable(name))
         .orElse(providers.environmentVariable(uppercaseName))
+}
+
+fun checksumHex(file: File, algorithm: String): String {
+    val digest = MessageDigest.getInstance(algorithm)
+    file.inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) {
+                break
+            }
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString(separator = "") { byte ->
+        "%02x".format(byte)
+    }
 }
 
 wire {
@@ -187,6 +211,13 @@ publishing {
             }
         }
     }
+
+    repositories {
+        maven {
+            name = "centralBundle"
+            url = uri(layout.buildDirectory.dir("central-portal/repository"))
+        }
+    }
 }
 
 val signingKey = publishingValue("signingKey", "SIGNING_KEY")
@@ -212,6 +243,50 @@ nexusPublishing {
             password.set(publishingValue("sonatypePassword", "SONATYPE_PASSWORD"))
         }
     }
+}
+
+val centralPortalRepositoryDir = layout.buildDirectory.dir("central-portal/repository")
+
+val cleanCentralPortalRepository = tasks.register<Delete>("cleanCentralPortalRepository") {
+    delete(centralPortalRepositoryDir)
+}
+
+tasks.named("publishMavenJavaPublicationToCentralBundleRepository") {
+    dependsOn(cleanCentralPortalRepository)
+}
+
+val generateCentralPortalChecksums = tasks.register("generateCentralPortalChecksums") {
+    description = "Generates checksum files for the Central Portal upload bundle."
+    group = LifecycleBasePlugin.BUILD_GROUP
+    dependsOn(tasks.named("publishMavenJavaPublicationToCentralBundleRepository"))
+
+    doLast {
+        val repositoryDir = centralPortalRepositoryDir.get().asFile
+        repositoryDir.walkTopDown()
+            .filter { it.isFile }
+            .filter { file ->
+                val name = file.name
+                !name.endsWith(".asc") &&
+                    !name.endsWith(".md5") &&
+                    !name.endsWith(".sha1") &&
+                    !name.endsWith(".sha256") &&
+                    !name.endsWith(".sha512")
+            }
+            .forEach { file ->
+                for ((algorithm, extension) in checksumAlgorithms) {
+                    file.resolveSibling("${file.name}.$extension").writeText(checksumHex(file, algorithm))
+                }
+            }
+    }
+}
+
+tasks.register<Zip>("bundleCentralPortalUpload") {
+    description = "Builds a Sonatype Central Portal upload bundle."
+    group = LifecycleBasePlugin.BUILD_GROUP
+    dependsOn(generateCentralPortalChecksums)
+    destinationDirectory.set(layout.buildDirectory.dir("central-portal"))
+    archiveFileName.set("modal-kt-${project.version}-central-bundle.zip")
+    from(centralPortalRepositoryDir)
 }
 
 idea {

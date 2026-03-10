@@ -228,4 +228,20 @@ cd modal-kt
 ./gradlew closeAndReleaseSonatypeStagingRepository
 ```
 
+If you want to use the Sonatype web UI upload form instead of the staging API flow:
+
+```bash
+cd modal-kt
+./gradlew bundleCentralPortalUpload
+```
+
+That writes an uploadable bundle to `build/central-portal/modal-kt-<version>-central-bundle.zip`.
+
+In the Sonatype UI:
+- `Deployment Name`: `app.alloy:modal-kt:<version>`
+- `Description`: `Modal Kotlin SDK release <version>`
+- `Upload Your File`: the generated bundle zip
+
+The bundle task signs the artifacts and adds checksums, so it still requires `signingKey` and `signingPassword`, but it does not require the Sonatype username/password.
+
 This first pass is release-only. `-SNAPSHOT` and dev publishing are not wired up yet.
