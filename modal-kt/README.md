@@ -22,7 +22,7 @@ Example dependency:
 
 ```kotlin
 dependencies {
-    implementation("com.modal:modal-kt")
+    implementation("app.alloy:modal-kt")
 }
 ```
 
@@ -192,3 +192,40 @@ cd modal-kt
 ./gradlew test
 ./gradlew compileExamples
 ```
+
+## Publishing
+
+`modal-kt` is configured for manual Maven Central publishing as `app.alloy:modal-kt`.
+
+Required local Gradle properties or environment variables:
+
+```properties
+sonatypeUsername=...
+sonatypePassword=...
+signingKey=-----BEGIN PGP PRIVATE KEY BLOCK-----
+...
+-----END PGP PRIVATE KEY BLOCK-----
+signingPassword=...
+```
+
+You can put these in `~/.gradle/gradle.properties`, export them directly in your shell, or use Gradle-style environment variables such as `ORG_GRADLE_PROJECT_sonatypeUsername`.
+
+Local verification:
+
+```bash
+cd modal-kt
+./gradlew clean test compileExamples
+./gradlew publishToMavenLocal
+```
+
+Inspect the published files under `~/.m2/repository/app/alloy/modal-kt/<version>/` and confirm the jar, sources jar, javadoc jar, `.pom`, and `.asc` signatures are present.
+
+Manual release sequence:
+
+```bash
+cd modal-kt
+./gradlew publishToSonatype
+./gradlew closeAndReleaseSonatypeStagingRepository
+```
+
+This first pass is release-only. `-SNAPSHOT` and dev publishing are not wired up yet.
